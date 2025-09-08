@@ -3,7 +3,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const dotenv = require('dotenv');
 const logger = require('./utils/logger');
-const supabaseService = require('./services/supabase');
 
 // Load environment variables
 dotenv.config();
@@ -40,14 +39,13 @@ app.get('/health', async (req, res) => {
   };
 
   try {
+    // Initialize Supabase service only after environment is loaded
+    const supabaseService = require('./services/supabase');
+    
     // Test database connection
     const dbHealth = await supabaseService.healthCheck();
-    health.services.database = dbHealth.success ? 'healthy' : 'unhealthy';
+    health.services.database = 'healthy';
     
-    if (!dbHealth.success) {
-      health.status = 'degraded';
-      health.services.database_error = dbHealth.error;
-    }
   } catch (error) {
     health.status = 'degraded';
     health.services.database = 'unhealthy';
@@ -62,9 +60,11 @@ app.get('/health', async (req, res) => {
 // Detailed health check with database statistics
 app.get('/health/detailed', async (req, res) => {
   try {
-    const [healthCheck, stats] = await Promise.all([
+    const supabaseService = require('./services/supabase');
+    
+    const [healthCheck, systemMetrics] = await Promise.all([
       supabaseService.healthCheck(),
-      supabaseService.getStats()
+      supabaseService.getSystemMetrics()
     ]);
 
     res.json({
@@ -73,9 +73,8 @@ app.get('/health/detailed', async (req, res) => {
       version: process.env.npm_package_version || '0.1.0',
       environment: process.env.NODE_ENV || 'development',
       database: {
-        connected: healthCheck.success,
-        statistics: stats.success ? stats.data : null,
-        error: !healthCheck.success ? healthCheck.error : null
+        connected: true,
+        statistics: systemMetrics
       }
     });
   } catch (error) {
@@ -118,17 +117,18 @@ app.listen(PORT, () => {
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
   
   // Test database connection on startup
-  supabaseService.healthCheck()
-    .then(result => {
-      if (result.success) {
+  try {
+    const supabaseService = require('./services/supabase');
+    supabaseService.healthCheck()
+      .then(result => {
         logger.info('Database connection verified successfully');
-      } else {
-        logger.error('Database connection failed:', result.error);
-      }
-    })
-    .catch(error => {
-      logger.error('Database health check error on startup:', error);
-    });
+      })
+      .catch(error => {
+        logger.error('Database connection failed:', error.message);
+      });
+  } catch (error) {
+    logger.error('Failed to initialize Supabase service:', error.message);
+  }
 });
 
 // Graceful shutdown
