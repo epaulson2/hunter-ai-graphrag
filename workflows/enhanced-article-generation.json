@@ -1,0 +1,234 @@
+{
+  "name": "Enhanced Article Generation with Agentic RAG",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trigger-enhanced-article",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Article Generation Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 200],
+      "webhookId": "enhanced-article-generation"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Query Analysis for Tool Selection\nconst content = $input.first().json.content || '';\nconst businessContext = $input.first().json.business_categories || [];\nconst articleType = $input.first().json.article_type || 'general';\n\n// Analyze query complexity and intent\nfunction analyzeQuery(content, context) {\n  let complexity = 'simple';\n  let intent = 'general';\n  let confidence = 0.8;\n  \n  // Check for business context\n  if (context.length > 0) {\n    intent = 'business_context';\n    complexity = 'medium';\n  }\n  \n  // Check for complex reasoning needs\n  if (content.includes('analyze') || content.includes('compare') || content.includes('strategy')) {\n    complexity = 'high';\n    confidence = 0.6;\n  }\n  \n  // Check for local context needs\n  if (content.includes('Huntersville') || content.includes('local') || content.includes('community')) {\n    intent = 'local_context';\n    complexity = 'medium';\n  }\n  \n  return { complexity, intent, confidence };\n}\n\n// Tool selection logic\nfunction selectTool(analysis, businessContext) {\n  if (analysis.complexity === 'simple' && analysis.confidence > 0.8) {\n    return {\n      tool: 'vector_search',\n      model: 'gpt-4o-mini',\n      estimated_cost: 0.02,\n      approach: 'similarity_search'\n    };\n  }\n  \n  if (businessContext.length > 0) {\n    return {\n      tool: 'business_intelligence',\n      model: 'gpt-4o-mini',\n      approach: 'sql_vector_hybrid',\n      estimated_cost: 0.05\n    };\n  }\n  \n  if (analysis.intent === 'local_context') {\n    return {\n      tool: 'local_knowledge',\n      model: 'gpt-4o-mini',\n      approach: 'hybrid_search',\n      estimated_cost: 0.08\n    };\n  }\n  \n  // Only use expensive models when absolutely necessary\n  if (analysis.complexity === 'high' && analysis.intent === 'reasoning') {\n    return {\n      tool: 'complex_reasoning',\n      model: 'claude-3.5-sonnet',\n      estimated_cost: 0.35\n    };\n  }\n  \n  return {\n    tool: 'vector_search',\n    model: 'gpt-4o-mini',\n    estimated_cost: 0.02\n  };\n}\n\nconst analysis = analyzeQuery(content, businessContext);\nconst toolSelection = selectTool(analysis, businessContext);\n\nreturn [{\n  query_analysis: analysis,\n  tool_selection: toolSelection,\n  original_content: content,\n  business_context: businessContext,\n  article_type: articleType,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "id": "query-analysis",
+      "name": "Query Analysis & Tool Selection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.tool_selection.tool }}",
+              "rightValue": "vector_search",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "tool-router",
+      "name": "Tool Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [600, 200]
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {
+          "dimensions": 1536
+        },
+        "text": "={{ $json.original_content }}"
+      },
+      "id": "create-embedding",
+      "name": "Create Embedding",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1,
+      "position": [800, 100]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT content, metadata, source_type\\nFROM hunter_knowledge_chunks\\nWHERE embedding <=> $1::vector < 0.3\\nORDER BY embedding <=> $1::vector\\nLIMIT 5",
+        "additionalFields": {
+          "mode": "single"
+        },
+        "options": {
+          "queryParameters": "={{ [$json.embedding] }}"
+        }
+      },
+      "id": "vector-search",
+      "name": "Vector Search",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1000, 100]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT bp.*, b.name, b.category, b.description\\nFROM business_partnerships_enhanced bp\\nJOIN businesses b ON bp.business_id = b.id\\nWHERE bp.active = true \\nAND bp.mention_credits > 0\\nAND b.category = ANY($1::text[])\\nORDER BY bp.partnership_tier DESC, bp.mention_credits DESC\\nLIMIT 3",
+        "additionalFields": {
+          "mode": "single"
+        },
+        "options": {
+          "queryParameters": "={{ [$json.business_context] }}"
+        }
+      },
+      "id": "business-query",
+      "name": "Business Intelligence Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 1000
+        },
+        "messages": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are Hunter, Huntersville's friendly AI assistant. Write engaging local content that naturally incorporates relevant business mentions when appropriate. Keep costs low by being concise but informative.\\n\\nStyle Guidelines:\\n- Conversational and warm tone\\n- Focus on community value\\n- Include specific local details\\n- Natural business mentions (not promotional)\\n- 300-500 words maximum"
+            },
+            {
+              "role": "user",
+              "content": "Content to expand: {{ $('query-analysis').first().json.original_content }}\\n\\nRelevant local knowledge: {{ $json.content }}\\n\\nAvailable business partners: {{ $('business-query').first().json }}\\n\\nWrite an engaging article that serves the Huntersville community."
+            }
+          ]
+        }
+      },
+      "id": "generate-article",
+      "name": "Generate Article",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [1200, 150]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Business mention detection and cost calculation\nconst article = $input.first().json.choices[0].message.content;\nconst businessPartners = $('business-query').first().json || [];\nconst toolUsed = $('query-analysis').first().json.tool_selection;\n\n// Detect business mentions in the generated article\nfunction detectBusinessMentions(article, partners) {\n  const mentions = [];\n  \n  partners.forEach(partner => {\n    if (article.toLowerCase().includes(partner.name.toLowerCase())) {\n      mentions.push({\n        business_id: partner.business_id,\n        business_name: partner.name,\n        mention_type: 'natural',\n        value: partner.mention_cost_per_credit || 5.00,\n        partnership_tier: partner.partnership_tier\n      });\n    }\n  });\n  \n  return mentions;\n}\n\n// Calculate generation costs\nfunction calculateCosts(toolUsed, article, mentions) {\n  const wordCount = article.split(' ').length;\n  const estimatedTokens = Math.ceil(wordCount * 1.3); // rough tokens estimate\n  \n  const costs = {\n    'gpt-4o-mini': 0.15 / 1000000, // per token\n    'claude-3.5-sonnet': 3.00 / 1000000,\n    'text-embedding-3-small': 0.02 / 1000000\n  };\n  \n  const generationCost = estimatedTokens * costs[toolUsed.model];\n  const embeddingCost = 0.001; // small embedding cost\n  const totalCost = generationCost + embeddingCost;\n  \n  const mentionRevenue = mentions.reduce((sum, m) => sum + m.value, 0);\n  \n  return {\n    generation_cost: totalCost,\n    mention_revenue: mentionRevenue,\n    net_value: mentionRevenue - totalCost,\n    token_count: estimatedTokens,\n    cost_per_article: totalCost\n  };\n}\n\n// Quality scoring\nfunction calculateQualityScore(article, mentions) {\n  let score = 0.7; // base score\n  \n  // Bonus for natural business mentions\n  if (mentions.length > 0 && mentions.length <= 2) {\n    score += 0.1;\n  }\n  \n  // Bonus for appropriate length\n  const wordCount = article.split(' ').length;\n  if (wordCount >= 300 && wordCount <= 500) {\n    score += 0.1;\n  }\n  \n  // Bonus for local context\n  if (article.includes('Huntersville') || article.includes('community')) {\n    score += 0.1;\n  }\n  \n  return Math.min(score, 1.0);\n}\n\nconst mentions = detectBusinessMentions(article, businessPartners);\nconst costs = calculateCosts(toolUsed, article, mentions);\nconst qualityScore = calculateQualityScore(article, mentions);\n\nreturn [{\n  article_content: article,\n  business_mentions: mentions,\n  cost_analysis: costs,\n  quality_score: qualityScore,\n  tool_used: toolUsed.tool,\n  model_used: toolUsed.model,\n  generation_type: $('query-analysis').first().json.article_type,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "id": "analyze-output",
+      "name": "Analyze Output & Calculate Costs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 150]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "article_generation_logs",
+        "columns": "article_id, generation_type, tools_used, business_mentions, total_generation_cost, mention_revenue, net_value, quality_metrics",
+        "additionalFields": {
+          "mode": "single"
+        },
+        "options": {
+          "queryParameters": "={{ [null, $json.generation_type, [$json.tool_used], JSON.stringify($json.business_mentions), $json.cost_analysis.cost_per_article, $json.cost_analysis.mention_revenue, $json.cost_analysis.net_value, JSON.stringify({quality_score: $json.quality_score, model_used: $json.model_used})] }}"
+        }
+      },
+      "id": "log-generation",
+      "name": "Log Generation Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1600, 150]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "rag_query_logs",
+        "columns": "query_text, query_intent, tool_selected, model_used, token_count, cost_usd, quality_score",
+        "additionalFields": {
+          "mode": "single"
+        },
+        "options": {
+          "queryParameters": "={{ [$('query-analysis').first().json.original_content, $('query-analysis').first().json.query_analysis.intent, $json.tool_used, $json.model_used, $json.cost_analysis.token_count, $json.cost_analysis.cost_per_article, $json.quality_score] }}"
+        }
+      },
+      "id": "log-query",
+      "name": "Log Query Performance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1600, 250]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"article\": $json.article_content,\n  \"business_mentions\": $json.business_mentions.length,\n  \"cost_analysis\": {\n    \"generation_cost\": $json.cost_analysis.cost_per_article,\n    \"revenue\": $json.cost_analysis.mention_revenue,\n    \"net_value\": $json.cost_analysis.net_value\n  },\n  \"quality_score\": $json.quality_score,\n  \"tool_used\": $json.tool_used,\n  \"timestamp\": $json.timestamp\n} }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1800, 150]
+    }
+  ],
+  "connections": {
+    "webhook-trigger": {
+      "main": [[{ "node": "query-analysis", "type": "main", "index": 0 }]]
+    },
+    "query-analysis": {
+      "main": [[{ "node": "tool-router", "type": "main", "index": 0 }]]
+    },
+    "tool-router": {
+      "main": [
+        [{ "node": "create-embedding", "type": "main", "index": 0 }],
+        [{ "node": "business-query", "type": "main", "index": 0 }]
+      ]
+    },
+    "create-embedding": {
+      "main": [[{ "node": "vector-search", "type": "main", "index": 0 }]]
+    },
+    "vector-search": {
+      "main": [[{ "node": "generate-article", "type": "main", "index": 0 }]]
+    },
+    "business-query": {
+      "main": [[{ "node": "generate-article", "type": "main", "index": 0 }]]
+    },
+    "generate-article": {
+      "main": [[{ "node": "analyze-output", "type": "main", "index": 0 }]]
+    },
+    "analyze-output": {
+      "main": [
+        [{ "node": "log-generation", "type": "main", "index": 0 }],
+        [{ "node": "log-query", "type": "main", "index": 0 }]
+      ]
+    },
+    "log-generation": {
+      "main": [[{ "node": "webhook-response", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-09-08T09:00:00.000Z",
+  "versionId": "1"
+}
