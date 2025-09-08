@@ -91,7 +91,9 @@ app.get('/health/detailed', async (req, res) => {
 app.use('/api/articles', require('./routes/articles'));
 app.use('/api/knowledge-graph', require('./routes/knowledge-graph'));
 app.use('/api/business-partners', require('./routes/business-partners'));
-app.use('/api/workflows', require('./routes/workflows'));
+app.use('/api/content-queue', require('./routes/content-queue'));
+app.use('/api/article-business-mentions', require('./routes/article-business-mentions'));
+app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/analytics', require('./routes/analytics'));
 
 // Error handling middleware
