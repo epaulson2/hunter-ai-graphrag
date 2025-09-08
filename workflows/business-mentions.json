@@ -1,0 +1,246 @@
+{
+  "name": "Hunter AI - Business Mentions",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook-business-mentions",
+        "options": {}
+      },
+      "id": "7a8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
+      "name": "Business Mentions Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "business-mentions-webhook"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "url": "={{$env.HUNTER_API_BASE_URL}}/api/articles/{{$json.article_id}}",
+        "options": {}
+      },
+      "id": "8b9c0d1e-2f3a-4b5c-6d7e-8f9a0b1c2d3e",
+      "name": "Get Article Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "options": {
+          "headers": {
+            "entries": [
+              {
+                "name": "Authorization",
+                "value": "Bearer {{$env.OPENAI_API_KEY}}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "model",
+              "value": "gpt-4o-mini"
+            },
+            {
+              "name": "messages",
+              "value": "=[{\"role\": \"system\", \"content\": \"Extract business names, locations, and types from this article. Return as structured JSON with name, address, business_type, and mention_context.\"}, {\"role\": \"user\", \"content\": \"{{$json.content}}\"}]"
+            },
+            {
+              "name": "max_tokens",
+              "value": 1000
+            },
+            {
+              "name": "temperature",
+              "value": 0.1
+            }
+          ]
+        }
+      },
+      "id": "9c0d1e2f-3a4b-5c6d-7e8f-9a0b1c2d3e4f",
+      "name": "Extract Business Mentions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the OpenAI response and prepare business data\nconst response = $input.all()[0].json;\nconst businesses = JSON.parse(response.choices[0].message.content);\n\nconst results = [];\n\nfor (const business of businesses) {\n  results.push({\n    name: business.name,\n    address: business.address || null,\n    business_type: business.business_type || 'Unknown',\n    mention_context: business.mention_context,\n    article_id: $node['Business Mentions Webhook'].json.article_id,\n    relevance_score: 0.8, // Default score, will be calculated later\n    partnership_status: 'potential'\n  });\n}\n\nreturn results;"
+      },
+      "id": "0d1e2f3a-4b5c-6d7e-8f9a-0b1c2d3e4f5a",
+      "name": "Process Business Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "={{$env.HUNTER_API_BASE_URL}}/api/business-partners",
+        "options": {
+          "headers": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "name",
+              "value": "={{$json.name}}"
+            },
+            {
+              "name": "address",
+              "value": "={{$json.address}}"
+            },
+            {
+              "name": "business_type",
+              "value": "={{$json.business_type}}"
+            },
+            {
+              "name": "partnership_status",
+              "value": "={{$json.partnership_status}}"
+            }
+          ]
+        }
+      },
+      "id": "1e2f3a4b-5c6d-7e8f-9a0b-1c2d3e4f5a6b",
+      "name": "Save Business Partner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "={{$env.HUNTER_API_BASE_URL}}/api/article-business-mentions",
+        "options": {
+          "headers": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "article_id",
+              "value": "={{$json.article_id}}"
+            },
+            {
+              "name": "business_partner_id",
+              "value": "={{$node['Save Business Partner'].json.id}}"
+            },
+            {
+              "name": "mention_context",
+              "value": "={{$json.mention_context}}"
+            },
+            {
+              "name": "relevance_score",
+              "value": "={{$json.relevance_score}}"
+            }
+          ]
+        }
+      },
+      "id": "2f3a4b5c-6d7e-8f9a-0b1c-2d3e4f5a6b7c",
+      "name": "Create Article-Business Link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Business Mentions Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Article Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Article Details": {
+      "main": [
+        [
+          {
+            "node": "Extract Business Mentions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Business Mentions": {
+      "main": [
+        [
+          {
+            "node": "Process Business Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Business Data": {
+      "main": [
+        [
+          {
+            "node": "Save Business Partner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Business Partner": {
+      "main": [
+        [
+          {
+            "node": "Create Article-Business Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "3",
+  "id": "3",
+  "meta": {
+    "instanceId": "hunter-ai-business-mentions"
+  },
+  "tags": [
+    {
+      "createdAt": "2025-09-08T00:00:00.000Z",
+      "updatedAt": "2025-09-08T00:00:00.000Z",
+      "id": "1",
+      "name": "hunter-ai"
+    }
+  ]
+}

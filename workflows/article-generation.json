@@ -1,0 +1,275 @@
+{
+  "name": "Hunter AI - Article Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook-article-generation",
+        "options": {}
+      },
+      "id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+      "name": "Article Generation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "article-gen-webhook"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "url": "={{$env.HUNTER_API_BASE_URL}}/api/content-queue/{{$json.content_id}}",
+        "options": {}
+      },
+      "id": "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e",
+      "name": "Get Content Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "options": {
+          "headers": {
+            "entries": [
+              {
+                "name": "Authorization",
+                "value": "Bearer {{$env.OPENAI_API_KEY}}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "model",
+              "value": "gpt-4o-mini"
+            },
+            {
+              "name": "messages",
+              "value": "=[{\"role\": \"system\", \"content\": \"You are a content filter for local journalism. Determine if this content is relevant for local community news and extract key topics.\"}, {\"role\": \"user\", \"content\": \"{{$json.content}}\"}]"
+            },
+            {
+              "name": "max_tokens",
+              "value": 500
+            },
+            {
+              "name": "temperature",
+              "value": 0.3
+            }
+          ]
+        }
+      },
+      "id": "3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f",
+      "name": "OpenAI Content Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "options": {
+          "headers": {
+            "entries": [
+              {
+                "name": "x-api-key",
+                "value": "{{$env.ANTHROPIC_API_KEY}}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              }
+            ]
+          }
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "model",
+              "value": "claude-3-5-sonnet-20241022"
+            },
+            {
+              "name": "max_tokens",
+              "value": 2000
+            },
+            {
+              "name": "messages",
+              "value": "=[{\"role\": \"user\", \"content\": \"Write a local news article based on this content in Hunter's engaging, conversational style. Include relevant business mentions and community impact. Original content: {{$json.content}}\"}]"
+            }
+          ]
+        }
+      },
+      "id": "4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a",
+      "name": "Claude Article Generation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "={{$env.HUNTER_API_BASE_URL}}/api/articles",
+        "options": {
+          "headers": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "title",
+              "value": "={{$node['Get Content Details'].json.title}}"
+            },
+            {
+              "name": "content",
+              "value": "={{$json.content[0].text}}"
+            },
+            {
+              "name": "author",
+              "value": "Hunter AI"
+            },
+            {
+              "name": "status",
+              "value": "draft"
+            },
+            {
+              "name": "source_url",
+              "value": "={{$node['Get Content Details'].json.source_url}}"
+            }
+          ]
+        }
+      },
+      "id": "5e6f7a8b-9c0d-1e2f-3a4b-5c6d7e8f9a0b",
+      "name": "Save Article",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "={{$env.HUNTER_API_BASE_URL}}/api/webhooks/trigger-business-mentions",
+        "options": {
+          "headers": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "article_id",
+              "value": "={{$json.id}}"
+            }
+          ]
+        }
+      },
+      "id": "6f7a8b9c-0d1e-2f3a-4b5c-6d7e8f9a0b1c",
+      "name": "Trigger Business Mentions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Article Generation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Content Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Content Details": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Content Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Content Analysis": {
+      "main": [
+        [
+          {
+            "node": "Claude Article Generation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Article Generation": {
+      "main": [
+        [
+          {
+            "node": "Save Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Article": {
+      "main": [
+        [
+          {
+            "node": "Trigger Business Mentions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "2",
+  "id": "2",
+  "meta": {
+    "instanceId": "hunter-ai-article-generation"
+  },
+  "tags": [
+    {
+      "createdAt": "2025-09-08T00:00:00.000Z",
+      "updatedAt": "2025-09-08T00:00:00.000Z",
+      "id": "1",
+      "name": "hunter-ai"
+    }
+  ]
+}
