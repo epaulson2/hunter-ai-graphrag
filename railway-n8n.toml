@@ -1,0 +1,45 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "n8n/Dockerfile"
+
+[deploy]
+startCommand = "n8n"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+numReplicas = 1
+
+[env]
+N8N_PORT = "5678"
+N8N_HOST = "0.0.0.0"
+N8N_PROTOCOL = "https"
+N8N_METRICS = "true"
+EXECUTIONS_PROCESS = "main"
+EXECUTIONS_MODE = "regular"
+GENERIC_TIMEZONE = "America/New_York"
+N8N_SECURE_COOKIE = "true"
+
+# Authentication - CHANGE THESE IN RAILWAY
+N8N_BASIC_AUTH_ACTIVE = "true"
+N8N_BASIC_AUTH_USER = "admin"
+N8N_BASIC_AUTH_PASSWORD = "change_this_password"
+
+# Database Configuration - UPDATE IN RAILWAY
+DB_TYPE = "postgresdb"
+DB_POSTGRESDB_HOST = "db.yknfbokdogitccextpuh.supabase.co"
+DB_POSTGRESDB_PORT = "5432"
+DB_POSTGRESDB_DATABASE = "postgres"
+DB_POSTGRESDB_USER = "postgres"
+DB_POSTGRESDB_SCHEMA = "n8n"
+
+# Encryption - GENERATE RANDOM KEY IN RAILWAY
+N8N_ENCRYPTION_KEY = "your-32-character-encryption-key"
+
+# Integration URLs - UPDATE WITH ACTUAL RAILWAY DOMAINS
+WEBHOOK_URL = "https://your-n8n-domain.railway.app"
+N8N_HOST = "your-n8n-domain.railway.app"
+HUNTER_API_BASE_URL = "https://hunter-ai-graphrag-production.up.railway.app"
+
+# External APIs - ADD YOUR KEYS IN RAILWAY
+SUPABASE_URL = "https://yknfbokdogitccextpuh.supabase.co"
+OPENAI_API_KEY = "your-openai-api-key"
+ANTHROPIC_API_KEY = "your-anthropic-api-key"
