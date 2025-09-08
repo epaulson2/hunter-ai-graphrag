@@ -1,76 +1,45 @@
-/**
- * Supabase Database Service
- * Handles all database operations for the Hunter AI GraphRAG system
- */
-
+// src/services/supabase.js
 const { createClient } = require('@supabase/supabase-js');
 const logger = require('../utils/logger');
 
-// Initialize Supabase client
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error('Missing Supabase environment variables');
-}
-
-// Public client for authenticated operations
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-// Service client for admin operations (bypasses RLS)
-const supabaseAdmin = supabaseServiceKey 
-  ? createClient(supabaseUrl, supabaseServiceKey)
-  : null;
-
 class SupabaseService {
   constructor() {
-    this.client = supabase;
-    this.adminClient = supabaseAdmin;
+    this.supabaseUrl = process.env.SUPABASE_URL;
+    this.supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+    this.supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (!this.supabaseUrl || !this.supabaseAnonKey) {
+      throw new Error('Missing required Supabase environment variables');
+    }
+
+    // Client for general operations (respects RLS)
+    this.client = createClient(this.supabaseUrl, this.supabaseAnonKey);
+    
+    // Admin client for service operations (bypasses RLS)
+    this.adminClient = this.supabaseServiceKey 
+      ? createClient(this.supabaseUrl, this.supabaseServiceKey)
+      : this.client;
+
+    logger.info('Supabase service initialized');
   }
 
-  // ==================== ARTICLES ====================
-
-  /**
-   * Create a new article
-   */
-  async createArticle(articleData) {
+  // Health check
+  async healthCheck() {
     try {
       const { data, error } = await this.client
         .from('articles')
-        .insert([{
-          title: articleData.title,
-          content: articleData.content,
-          hunter_voice_score: articleData.hunter_voice_score || 0,
-          quality_score: articleData.quality_score || 0,
-          relevance_score: articleData.relevance_score || 0,
-          status: articleData.status || 'draft',
-          source_url: articleData.source_url,
-          source_title: articleData.source_title,
-          source_description: articleData.source_description,
-          image_url: articleData.image_url,
-          image_alt_text: articleData.image_alt_text,
-          category: articleData.category,
-          tags: articleData.tags || [],
-          word_count: articleData.word_count,
-          engagement_potential: articleData.engagement_potential
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
+        .select('count', { count: 'exact', head: true });
       
-      logger.info('Article created successfully', { articleId: data.id });
-      return { success: true, data };
+      if (error) throw error;
+      return { status: 'healthy', timestamp: new Date().toISOString() };
     } catch (error) {
-      logger.error('Error creating article:', error);
-      return { success: false, error: error.message };
+      logger.error('Supabase health check failed:', error);
+      throw new Error('Supabase connection failed');
     }
   }
 
-  /**
-   * Get articles with filtering and pagination
-   */
+  // ==================== ARTICLES ====================
+  
   async getArticles(filters = {}) {
     try {
       let query = this.client
@@ -79,73 +48,45 @@ class SupabaseService {
           id,
           title,
           content,
+          summary,
+          publication_status,
           hunter_voice_score,
           quality_score,
-          relevance_score,
-          status,
-          source_url,
-          source_title,
-          image_url,
-          image_alt_text,
-          category,
-          tags,
-          word_count,
-          engagement_potential,
-          published_at,
-          app_published,
-          app_published_at,
-          social_media_posted,
+          publication_date,
+          view_count,
+          engagement_score,
           created_at,
           updated_at
-        `);
+        `)
+        .eq('publication_status', 'published')
+        .order('publication_date', { ascending: false });
 
       // Apply filters
-      if (filters.status) {
-        query = query.eq('status', filters.status);
+      if (filters.limit) {
+        query = query.limit(filters.limit);
       }
-      if (filters.category) {
-        query = query.eq('category', filters.category);
-      }
-      if (filters.published) {
-        query = query.eq('app_published', filters.published);
-      }
-
-      // Apply sorting
-      const sortBy = filters.sortBy || 'created_at';
-      const sortOrder = filters.sortOrder || 'desc';
-      query = query.order(sortBy, { ascending: sortOrder === 'asc' });
-
-      // Apply pagination
-      const page = parseInt(filters.page) || 1;
-      const limit = parseInt(filters.limit) || 20;
-      const offset = (page - 1) * limit;
       
-      query = query.range(offset, offset + limit - 1);
+      if (filters.search) {
+        query = query.textSearch('title,content', filters.search);
+      }
+      
+      if (filters.minScore) {
+        query = query.gte('hunter_voice_score', filters.minScore);
+      }
 
-      const { data, error, count } = await query;
-
+      const { data, error } = await query;
+      
       if (error) throw error;
-
-      return {
-        success: true,
-        data,
-        pagination: {
-          page,
-          limit,
-          total: count,
-          pages: Math.ceil(count / limit)
-        }
-      };
+      
+      logger.info(`Retrieved ${data.length} articles`);
+      return data;
     } catch (error) {
       logger.error('Error fetching articles:', error);
-      return { success: false, error: error.message };
+      throw error;
     }
   }
 
-  /**
-   * Get a single article by ID
-   */
-  async getArticleById(articleId) {
+  async getArticleById(id) {
     try {
       const { data, error } = await this.client
         .from('articles')
@@ -153,11 +94,9 @@ class SupabaseService {
           *,
           article_business_mentions (
             id,
-            mention_type,
+            mention_text,
             relevance_score,
-            context_snippet,
             credits_used,
-            approved,
             business_partners (
               id,
               business_name,
@@ -165,242 +104,226 @@ class SupabaseService {
             )
           )
         `)
-        .eq('id', articleId)
+        .eq('id', id)
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error('Article not found');
+
+      // Increment view count
+      await this.incrementViewCount(id);
+
+      logger.info(`Retrieved article ${id}`);
+      return data;
+    } catch (error) {
+      logger.error(`Error fetching article ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async createArticle(articleData) {
+    try {
+      const { data, error } = await this.adminClient
+        .from('articles')
+        .insert([{
+          title: articleData.title,
+          content: articleData.content,
+          summary: articleData.summary,
+          publication_status: articleData.publication_status || 'draft',
+          hunter_voice_score: articleData.hunter_voice_score || 0,
+          quality_score: articleData.quality_score || 0,
+          publication_date: articleData.publication_date,
+          metadata: articleData.metadata || {}
+        }])
+        .select()
         .single();
 
       if (error) throw error;
 
-      return { success: true, data };
+      logger.info(`Created article: ${data.id}`);
+      return data;
     } catch (error) {
-      logger.error('Error fetching article:', error);
-      return { success: false, error: error.message };
+      logger.error('Error creating article:', error);
+      throw error;
     }
   }
 
-  /**
-   * Update an article
-   */
-  async updateArticle(articleId, updates) {
+  async updateArticle(id, updates) {
     try {
-      const { data, error } = await this.client
+      const { data, error } = await this.adminClient
         .from('articles')
         .update({
           ...updates,
           updated_at: new Date().toISOString()
         })
-        .eq('id', articleId)
+        .eq('id', id)
         .select()
         .single();
 
       if (error) throw error;
 
-      logger.info('Article updated successfully', { articleId });
-      return { success: true, data };
+      logger.info(`Updated article: ${id}`);
+      return data;
     } catch (error) {
-      logger.error('Error updating article:', error);
-      return { success: false, error: error.message };
+      logger.error(`Error updating article ${id}:`, error);
+      throw error;
+    }
+  }
+
+  async incrementViewCount(articleId) {
+    try {
+      const { error } = await this.client
+        .from('articles')
+        .update({ 
+          view_count: this.client.raw('view_count + 1'),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', articleId);
+
+      if (error) throw error;
+    } catch (error) {
+      logger.error(`Error incrementing view count for article ${articleId}:`, error);
+      // Don't throw - this is a non-critical operation
     }
   }
 
   // ==================== KNOWLEDGE GRAPH ====================
 
-  /**
-   * Create a new entity
-   */
-  async createEntity(entityData) {
-    try {
-      const { data, error } = await this.client
-        .from('kb_entities')
-        .insert([{
-          name: entityData.name,
-          type: entityData.type,
-          description: entityData.description,
-          attributes: entityData.attributes || {},
-          embedding: entityData.embedding,
-          confidence_score: entityData.confidence_score || 0
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      logger.info('Entity created successfully', { entityId: data.id });
-      return { success: true, data };
-    } catch (error) {
-      logger.error('Error creating entity:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Get entities with filtering and search
-   */
   async getEntities(filters = {}) {
     try {
       let query = this.client
         .from('kb_entities')
-        .select('*');
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      // Apply filters
       if (filters.type) {
-        query = query.eq('type', filters.type);
+        query = query.eq('entity_type', filters.type);
       }
+      
       if (filters.search) {
         query = query.ilike('name', `%${filters.search}%`);
       }
-
-      // Vector similarity search if embedding provided
-      if (filters.embedding) {
-        query = query.rpc('match_entities', {
-          query_embedding: filters.embedding,
-          match_threshold: filters.threshold || 0.8,
-          match_count: filters.limit || 10
-        });
+      
+      if (filters.limit) {
+        query = query.limit(filters.limit);
       }
 
       const { data, error } = await query;
-
+      
       if (error) throw error;
-
-      return { success: true, data };
+      
+      logger.info(`Retrieved ${data.length} entities`);
+      return data;
     } catch (error) {
       logger.error('Error fetching entities:', error);
-      return { success: false, error: error.message };
+      throw error;
     }
   }
 
-  /**
-   * Create a relationship between entities
-   */
-  async createRelationship(relationshipData) {
+  async createEntity(entityData) {
     try {
-      const { data, error } = await this.client
-        .from('kb_relationships')
+      const { data, error } = await this.adminClient
+        .from('kb_entities')
         .insert([{
-          source_entity_id: relationshipData.source_entity_id,
-          target_entity_id: relationshipData.target_entity_id,
-          relationship_type: relationshipData.relationship_type,
-          strength: relationshipData.strength || 0.5,
-          context: relationshipData.context,
-          temporal_start: relationshipData.temporal_start,
-          temporal_end: relationshipData.temporal_end,
-          attributes: relationshipData.attributes || {}
+          name: entityData.name,
+          entity_type: entityData.entity_type,
+          description: entityData.description,
+          properties: entityData.properties || {},
+          embedding: entityData.embedding
         }])
         .select()
         .single();
 
       if (error) throw error;
 
-      logger.info('Relationship created successfully', { relationshipId: data.id });
-      return { success: true, data };
+      logger.info(`Created entity: ${data.id} (${data.name})`);
+      return data;
     } catch (error) {
-      logger.error('Error creating relationship:', error);
-      return { success: false, error: error.message };
+      logger.error('Error creating entity:', error);
+      throw error;
     }
   }
 
-  /**
-   * Get relationships for an entity
-   */
-  async getEntityRelationships(entityId) {
+  async getRelationships(entityId = null) {
     try {
-      const { data, error } = await this.client
+      let query = this.client
         .from('kb_relationships')
         .select(`
           *,
-          source_entity:kb_entities!source_entity_id(id, name, type),
-          target_entity:kb_entities!target_entity_id(id, name, type)
-        `)
-        .or(`source_entity_id.eq.${entityId},target_entity_id.eq.${entityId}`);
+          source_entity:source_entity_id(id, name, entity_type),
+          target_entity:target_entity_id(id, name, entity_type)
+        `);
 
+      if (entityId) {
+        query = query.or(`source_entity_id.eq.${entityId},target_entity_id.eq.${entityId}`);
+      }
+
+      const { data, error } = await query;
+      
       if (error) throw error;
-
-      return { success: true, data };
+      
+      logger.info(`Retrieved ${data.length} relationships`);
+      return data;
     } catch (error) {
-      logger.error('Error fetching entity relationships:', error);
-      return { success: false, error: error.message };
+      logger.error('Error fetching relationships:', error);
+      throw error;
     }
   }
 
   // ==================== BUSINESS PARTNERS ====================
 
-  /**
-   * Create a new business partner
-   */
-  async createBusinessPartner(partnerData) {
-    try {
-      const { data, error } = await this.client
-        .from('business_partners')
-        .insert([{
-          entity_id: partnerData.entity_id,
-          business_name: partnerData.business_name,
-          contact_name: partnerData.contact_name,
-          contact_email: partnerData.contact_email,
-          contact_phone: partnerData.contact_phone,
-          partnership_tier: partnerData.partnership_tier || 'bronze',
-          monthly_fee: partnerData.monthly_fee,
-          mention_credits_total: partnerData.mention_credits_total || 0,
-          contract_start_date: partnerData.contract_start_date,
-          contract_end_date: partnerData.contract_end_date,
-          auto_renewal: partnerData.auto_renewal !== undefined ? partnerData.auto_renewal : true,
-          status: partnerData.status || 'active',
-          billing_address: partnerData.billing_address || {},
-          payment_method: partnerData.payment_method || {},
-          notes: partnerData.notes
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      logger.info('Business partner created successfully', { partnerId: data.id });
-      return { success: true, data };
-    } catch (error) {
-      logger.error('Error creating business partner:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Get business partners with filtering
-   */
   async getBusinessPartners(filters = {}) {
     try {
       let query = this.client
         .from('business_partners')
-        .select(`
-          *,
-          kb_entities(id, name, type, description)
-        `);
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      // Apply filters
       if (filters.status) {
         query = query.eq('status', filters.status);
       }
+      
       if (filters.tier) {
         query = query.eq('partnership_tier', filters.tier);
       }
 
       const { data, error } = await query;
-
+      
       if (error) throw error;
-
-      return { success: true, data };
+      
+      logger.info(`Retrieved ${data.length} business partners`);
+      return data;
     } catch (error) {
       logger.error('Error fetching business partners:', error);
-      return { success: false, error: error.message };
+      throw error;
     }
   }
 
-  /**
-   * Update business partner credits
-   */
-  async updatePartnerCredits(partnerId, creditsUsed) {
+  async getPartnerCredits(partnerId) {
     try {
       const { data, error } = await this.client
         .from('business_partners')
-        .update({
-          mention_credits_used: creditsUsed,
+        .select('credits_remaining, credits_purchased, monthly_allowance')
+        .eq('id', partnerId)
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error('Partner not found');
+
+      logger.info(`Retrieved credits for partner ${partnerId}`);
+      return data;
+    } catch (error) {
+      logger.error(`Error fetching partner credits ${partnerId}:`, error);
+      throw error;
+    }
+  }
+
+  async deductPartnerCredits(partnerId, amount, description) {
+    try {
+      const { data, error } = await this.adminClient
+        .from('business_partners')
+        .update({ 
+          credits_remaining: this.adminClient.raw(`credits_remaining - ${amount}`),
           updated_at: new Date().toISOString()
         })
         .eq('id', partnerId)
@@ -409,107 +332,87 @@ class SupabaseService {
 
       if (error) throw error;
 
-      return { success: true, data };
+      // Log the credit usage
+      await this.logCreditUsage(partnerId, amount, description);
+
+      logger.info(`Deducted ${amount} credits from partner ${partnerId}`);
+      return data;
     } catch (error) {
-      logger.error('Error updating partner credits:', error);
-      return { success: false, error: error.message };
+      logger.error(`Error deducting credits for partner ${partnerId}:`, error);
+      throw error;
     }
   }
 
-  // ==================== CONTENT QUEUE ====================
-
-  /**
-   * Add content to processing queue
-   */
-  async addToContentQueue(contentData) {
+  async logCreditUsage(partnerId, amount, description) {
     try {
-      const { data, error } = await this.client
-        .from('content_queue')
+      const { error } = await this.adminClient
+        .from('credit_usage_log')
         .insert([{
-          title: contentData.title,
-          description: contentData.description,
-          source_url: contentData.source_url,
-          relevance_score: contentData.relevance_score,
-          local_connections: contentData.local_connections || [],
-          business_opportunities: contentData.business_opportunities || []
-        }])
-        .select()
-        .single();
+          partner_id: partnerId,
+          credits_used: amount,
+          description: description,
+          timestamp: new Date().toISOString()
+        }]);
 
       if (error) throw error;
-
-      logger.info('Content added to queue successfully', { queueId: data.id });
-      return { success: true, data };
     } catch (error) {
-      logger.error('Error adding content to queue:', error);
-      return { success: false, error: error.message };
+      logger.error('Error logging credit usage:', error);
+      // Don't throw - this is logging only
     }
   }
 
-  /**
-   * Get pending content from queue
-   */
-  async getPendingContent(limit = 10) {
+  // ==================== ANALYTICS ====================
+
+  async getSystemMetrics() {
     try {
-      const { data, error } = await this.client
-        .from('content_queue')
-        .select('*')
-        .eq('status', 'pending_processing')
-        .order('relevance_score', { ascending: false })
-        .limit(limit);
-
-      if (error) throw error;
-
-      return { success: true, data };
-    } catch (error) {
-      logger.error('Error fetching pending content:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  // ==================== UTILITY FUNCTIONS ====================
-
-  /**
-   * Health check - test database connection
-   */
-  async healthCheck() {
-    try {
-      const { data, error } = await this.client
-        .from('articles')
-        .select('count', { count: 'exact', head: true });
-
-      if (error) throw error;
-
-      return { success: true, message: 'Database connection healthy' };
-    } catch (error) {
-      logger.error('Database health check failed:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Get database statistics
-   */
-  async getStats() {
-    try {
-      const [articles, entities, partners] = await Promise.all([
+      const [articlesResult, partnersResult, entitiesResult] = await Promise.all([
         this.client.from('articles').select('count', { count: 'exact', head: true }),
-        this.client.from('kb_entities').select('count', { count: 'exact', head: true }),
-        this.client.from('business_partners').select('count', { count: 'exact', head: true })
+        this.client.from('business_partners').select('count', { count: 'exact', head: true }),
+        this.client.from('kb_entities').select('count', { count: 'exact', head: true })
       ]);
 
-      return {
-        success: true,
-        data: {
-          articles: articles.count,
-          entities: entities.count,
-          partners: partners.count,
-          timestamp: new Date().toISOString()
-        }
+      const metrics = {
+        total_articles: articlesResult.count || 0,
+        total_partners: partnersResult.count || 0,
+        total_entities: entitiesResult.count || 0,
+        timestamp: new Date().toISOString()
       };
+
+      logger.info('Retrieved system metrics');
+      return metrics;
     } catch (error) {
-      logger.error('Error fetching database stats:', error);
-      return { success: false, error: error.message };
+      logger.error('Error fetching system metrics:', error);
+      throw error;
+    }
+  }
+
+  async getArticleAnalytics(days = 30) {
+    try {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+
+      const { data, error } = await this.client
+        .from('articles')
+        .select('hunter_voice_score, quality_score, view_count, engagement_score, publication_date')
+        .gte('publication_date', startDate.toISOString())
+        .eq('publication_status', 'published');
+
+      if (error) throw error;
+
+      const analytics = {
+        total_articles: data.length,
+        avg_hunter_score: data.reduce((sum, a) => sum + (a.hunter_voice_score || 0), 0) / data.length || 0,
+        avg_quality_score: data.reduce((sum, a) => sum + (a.quality_score || 0), 0) / data.length || 0,
+        total_views: data.reduce((sum, a) => sum + (a.view_count || 0), 0),
+        avg_engagement: data.reduce((sum, a) => sum + (a.engagement_score || 0), 0) / data.length || 0,
+        period_days: days
+      };
+
+      logger.info(`Retrieved analytics for ${days} days`);
+      return analytics;
+    } catch (error) {
+      logger.error('Error fetching article analytics:', error);
+      throw error;
     }
   }
 }
